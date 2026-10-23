@@ -1,34 +1,156 @@
 
-      - name: Generate shader data
+name: Build WhisperDesktop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[18.0,19.0)'
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Verify Visual Studio and C++ toolset
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          Write-Host "Searching for shader generation tools..."
-          Get-ChildItem -Recurse -File |
-            Where-Object {
-              $_.Name -match 'CompressShaders|shaderData-Release\.inl'
-            } |
-            Select-Object -ExpandProperty FullName
+          $vs = & vswhere.exe -latest -version '[18.0,19.0)' `
+            -property installationPath
 
-          $project = Get-ChildItem -Recurse -Filter '*CompressShaders*.csproj' |
-            Select-Object -First 1
-
-          if (-not $project) {
-            throw "Shader generator project not found. Inspect the repository's Tools folder."
+          if (-not $vs) {
+            throw "Visual Studio 2026 was not found."
           }
 
-          dotnet build $project.FullName -c Release
+          Write-Host "Visual Studio: $vs"
 
-          $generator = Get-ChildItem $project.Directory.FullName `
-            -Recurse -Filter 'CompressShaders.exe' |
-            Select-Object -First 1
-
-          if (-not $generator) {
-            throw "CompressShaders.exe not found after building the generator."
+          $toolsetPath = Join-Path $vs 'VC\Tools\MSVC'
+          if (Test-Path $toolsetPath) {
+            Get-ChildItem $toolsetPath -Directory |
+              Select-Object -ExpandProperty Name
           }
 
-          & $generator.FullName
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          nuget restore WhisperCpp.sln
           if ($LASTEXITCODE -ne 0) {
-            throw "Shader generator failed with exit code $LASTEXITCODE"
+            throw "NuGet restore failed."
           }
+
+      - name: Build shader generator
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $projects = Get-ChildItem -Path Tools -Recurse -File `
+            -Include *.csproj,*.sln -ErrorAction SilentlyContinue
+
+          Write-Host "Projects found under Tools:"
+          $projects | Select-Object -ExpandProperty FullName
+
+          $shaderProject = $projects |
+            Where-Object { $_.Name -match 'CompressShaders' } |
+            Select-Object -First 1
+
+          if (-not $shaderProject) {
+            Write-Host "No CompressShaders project found."
+            Write-Host "Checking whether shader data already exists..."
+
+            $existing = Get-ChildItem -Path . -Recurse -File `
+              -Filter 'shaderData-Release.inl' `
+              -ErrorAction SilentlyContinue
+
+            if (-not $existing) {
+              throw "Missing shaderData-Release.inl and no CompressShaders project was found. The generator must be identified before building."
+            }
+          }
+          else {
+            dotnet build $shaderProject.FullName -c Release
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to build shader generator."
+            }
+
+            $generator = Get-ChildItem `
+              -Path $shaderProject.Directory.FullName `
+              -Recurse -File -Filter 'CompressShaders.exe' |
+              Select-Object -First 1
+
+            if (-not $generator) {
+              throw "CompressShaders.exe was not produced."
+            }
+
+            Write-Host "Running shader generator: $($generator.FullName)"
+            Push-Location $shaderProject.Directory.FullName
+            try {
+              & $generator.FullName
+              if ($LASTEXITCODE -ne 0) {
+                throw "Shader generator failed."
+              }
+            }
+            finally {
+              Pop-Location
+            }
+          }
+
+      - name: Verify generated shader data
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $shaderData = Get-ChildItem -Path . -Recurse -File `
+            -Filter 'shaderData-Release.inl' `
+            -ErrorAction SilentlyContinue
+
+          if (-not $shaderData) {
+            throw "shaderData-Release.inl was not generated. Check the shader generator's required working directory and output path."
+          }
+
+          $shaderData | Select-Object -ExpandProperty FullName
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          msbuild WhisperCpp.sln `
+            /m `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:RestorePackagesConfig=true `
+            /verbosity:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "WhisperCpp.sln build failed."
+          }
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperDesktop-Windows-x64-Release
+          path: |
+            **/bin/x64/Release/**
+            **/bin/Release/**
+            **/x64/Release/**
+          if-no-files-found: warn
+          retention-days: 14
