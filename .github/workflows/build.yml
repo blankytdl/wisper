@@ -1,51 +1,62 @@
-﻿name: Build WhisperDesktop
+
+name: Build WhisperDesktop
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-
-permissions:
-  contents: read
+    branches:
+      - main
+      - master
 
 jobs:
   build:
-    runs-on: windows-2022
-    timeout-minutes: 45
+    name: Build Windows x64
+    runs-on: windows-2025-vs2026
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: microsoft/setup-msbuild@v2
+      - name: Set up Visual Studio 2026 MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: '[18.0,19.0)'
 
-      - uses: NuGet/setup-nuget@v2
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
 
-      - name: Find solution
-        id: solution
+      - name: Verify C++ toolset
         shell: pwsh
         run: |
-          $s = Get-ChildItem . -Recurse -Filter *.sln |
-            Where-Object { $_.FullName -notmatch '\\(bin|obj|\.git)\\' } |
-            Select-Object -First 1
+          $vs = & vswhere.exe -latest -version '[18.0,19.0)' `
+            -property installationPath
+          if (-not $vs) {
+            throw "Visual Studio 2026 was not found."
+          }
+          Write-Host "Visual Studio: $vs"
+          $toolset = Join-Path $vs 'VC\Tools\MSVC'
+          Get-ChildItem $toolset -Directory |
+            Select-Object -ExpandProperty Name
 
-          if (-not $s) { throw "No Visual Studio solution found." }
-
-          "path=$($s.FullName)" >> $env:GITHUB_OUTPUT
-
-      - name: Restore packages
-        run: nuget restore "${{ steps.solution.outputs.path }}"
+      - name: Restore NuGet packages
+        run: nuget restore WhisperCpp.sln
 
       - name: Build Release x64
-        run: msbuild "${{ steps.solution.outputs.path }}" /m /p:Configuration=Release /p:Platform=x64 /p:RestorePackagesConfig=true /verbosity:minimal
+        run: >
+          msbuild WhisperCpp.sln
+          /m
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:RestorePackagesConfig=true
+          /verbosity:minimal
 
-      - name: Upload compiled files
+      - name: Upload build outputs
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: WhisperDesktop-Windows-x64-Release
           path: |
-            **/Release/**/*.exe
-            **/Release/**/*.dll
-            **/x64/Release/**/*.exe
-            **/x64/Release/**/*.dll
-          if-no-files-found: error
+            **/bin/x64/Release/**
+            **/x64/Release/**
+          if-no-files-found: warn
           retention-days: 14
