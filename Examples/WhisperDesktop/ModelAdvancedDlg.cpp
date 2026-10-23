@@ -16,9 +16,9 @@ LRESULT ModelAdvancedDlg::onInitDialog( UINT nMessage, WPARAM wParam, LPARAM lPa
 	const uint32_t flags = appState.gpuFlagsLoad();
 
 	// Setup the "Compute shaders" combobox
-	cbWave.AddString( L"AMD 使用 Wave64 着色器" );
-	cbWave.AddString( L"始终使用 Wave32" );
-	cbWave.AddString( L"始终使用 Wave64" );
+	cbWave.AddString( L"Use Wave64 shaders on AMD" );
+	cbWave.AddString( L"Always use Wave32" );
+	cbWave.AddString( L"Always use Wave64" );
 	int i = 0;
 	if( 0 != ( flags & (uint32_t)eGpuModelFlags::Wave32 ) )
 		i = 1;
@@ -27,9 +27,9 @@ LRESULT ModelAdvancedDlg::onInitDialog( UINT nMessage, WPARAM wParam, LPARAM lPa
 	cbWave.SetCurSel( i );
 
 	// Setup the "Reshaped multiply" combobox
-	cbReshapedMatMul.AddString( L"AMD 自动重排" );
-	cbReshapedMatMul.AddString( L"禁用重排" );
-	cbReshapedMatMul.AddString( L"部分重排" );
+	cbReshapedMatMul.AddString( L"AMD automatic reshaping" );
+	cbReshapedMatMul.AddString( L"Disable reshaping" );
+	cbReshapedMatMul.AddString( L"Partial reshaping" );
 	i = 0;
 	if( 0 != ( flags & (uint32_t)eGpuModelFlags::NoReshapedMatMul ) )
 		i = 1;
@@ -37,11 +37,11 @@ LRESULT ModelAdvancedDlg::onInitDialog( UINT nMessage, WPARAM wParam, LPARAM lPa
 		i = 2;
 	cbReshapedMatMul.SetCurSel( i );
 
-	cbAdapter.AddString( L"使用默认" );
+	cbAdapter.AddString( L"Use default" );
 	HRESULT hr = Whisper::listGPUs( &addGpu, &cbAdapter );
 	if( FAILED( hr ) )
 	{
-		reportError( m_hWnd, L"无法枚举 GPU", L"", hr );
+		reportError( m_hWnd, L"Unable to enumerate GPUs", L"", hr );
 		return 0;
 	}
 	const CString setting = appState.stringLoad( L"gpu" );
